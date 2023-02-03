@@ -1,0 +1,491 @@
+<html>
+
+<head>
+
+    <style>
+        canvas {
+            display: block;
+            position: flex;
+            top: 0;
+            left: 0;
+        }
+    </style>
+
+<body>
+    <canvas id="myCanvas" width="200" height="100" style='border:1px solid #000000;'></canvas>
+    <b>Hash:</b> <span id='hash-code'></span><br>
+    <b>Hash Polygon:</b> <span id='hash-code-polygon'></span><br>
+    <b>Hash 256:</b> <span id='hash-code256'></span><br>
+    <b>Hash Polygon 256:</b> <span id='hash-code-polygon256'></span><br>
+    <b>Data Hash:</b> <span id='datahash'></span><br>
+    <b>Data:</b> <span id='datatxt'></span><br>
+    <b>Fonts Hash:</b> <span id='fonts-hash'></span><br>
+    <b>Fonts:</b> <span id='fonts'></span><br>
+    <b>IP Data:</b> <span id='ip-data'></span><br>
+    <b>IP V4:</b> <span id='ip-v4'></span><br>
+    <b>Media Devices Hash:</b> <span id='md-hash'></span><br>
+    <b>Media Devices List:</b> <span id='md-list'></span><br>
+    <b>Audio Hash:</b> <span id='a-hash'></span><br>
+    <b>Audio Hash 256:</b> <span id='a-hash-256'></span><br>
+    <br>
+    <b>Times ms:</b><br>
+    <b>Hash:</b> <span id='t-hash'></span><br>
+    <b>Hash Polygon:</b> <span id='t-hash-p'></span><br>
+    <b>Data:</b> <span id='t-data'></span><br>
+    <b>Fonts:</b> <span id='t-fonts'></span><br>
+    <b>IP Data:</b> <span id='t-ip'></span><br>
+    <b>IP V4:</b> <span id='t-ip4'></span><br>
+    <b>Media Devices:</b> <span id='t-media'></span><br>
+    <b>Audio:</b> <span id='t-audio'></span><br>
+
+</body>
+<script>
+    var fontsList = ["Arial", "Helvetica", "Times New Roman", "Verdana", "Tahoma", "Georgia", "Trebuchet MS", "Lucida Sans Unicode", "Comic Sans MS", "Courier New", "Impact", "Palatino Linotype", "Garamond", "Arial Black", "Century Gothic", "Lucida Console", "Franklin Gothic Medium", "Book Antiqua", "Arial Narrow", "Gill Sans MT", "Myriad Pro", "Segoe UI", "Bodoni MT", "Optima", "Calibri", "Candara", "Consolas", "Corbel", "Didot", "Eras ITC", "Futura", "Goudy Old Style", "Haettenschweiler", "Helvetica Neue", "Hoefler Text", "Rockwell", "Script MT Bold", "MS Sans Serif", "MS Serif", "Minion Pro", "Perpetua", "Playfair Display", "Andale Mono"];
+    var nativeForEach, nativeMap;
+    nativeForEach = Array.prototype.forEach;
+    nativeMap = Array.prototype.map;
+
+    async function hash_256(t, element) {
+        if (!t) {
+            element.innerHTML = ""
+            return
+        }
+
+        // encode as UTF-8
+        const msgBuffer = new TextEncoder().encode(t);
+
+        // hash the message
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+
+        // convert ArrayBuffer to Array
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+        // convert bytes to hex string                  
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        element.innerHTML = hashHex
+    }
+
+    this.each = function (obj, iterator, context) {
+        if (obj === null) {
+            return;
+        }
+        if (nativeForEach && obj.forEach === nativeForEach) {
+            obj.forEach(iterator, context);
+        } else if (obj.length === +obj.length) {
+            for (var i = 0, l = obj.length; i < l; i++) {
+                if (iterator.call(context, obj[i], i, obj) === {}) return;
+            }
+        } else {
+            for (var key in obj) {
+                if (obj.hasOwnProperty(key)) {
+                    if (iterator.call(context, obj[key], key, obj) === {}) return;
+                }
+            }
+        }
+    }
+
+    this.mapper = function (obj, iterator, context) {
+        var results = [];
+        if (obj == null) return results;
+        if (nativeMap && obj.map === nativeMap) return obj.map(iterator, context);
+        this.each(obj, function (value, index, list) {
+            results[results.length] = iterator.call(context, value, index, list);
+        });
+        return results;
+    }
+
+    function calculateHash(samples) {
+        let hash = 0
+        for (let i = 0; i < samples.length; ++i) {
+            hash += Math.abs(samples[i])
+        }
+        return hash
+    }
+
+    async function gatherAudio() {
+
+        var start = new Date().getTime();
+        const AudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContex
+        const context = new AudioContext(1, 5000, 44100)
+        const oscillator = context.createOscillator()
+        oscillator.type = "triangle"
+        oscillator.frequency.value = 1000
+
+        const compressor = context.createDynamicsCompressor()
+        compressor.threshold.value = -50
+        compressor.knee.value = 40
+        compressor.ratio.value = 12
+        compressor.reduction.value = 20
+        compressor.attack.value = 0
+        compressor.release.value = 0.2
+
+        oscillator.connect(compressor)
+        compressor.connect(context.destination);
+
+        oscillator.start()
+        context.oncomplete = event => {
+            const samples = event.renderedBuffer.getChannelData(0)
+            var end = new Date().getTime();
+            var timeTaken = end - start;
+            document.getElementById('t-audio').innerHTML = timeTaken
+            const hash = calculateHash(samples)
+            document.getElementById('a-hash').innerHTML = hash
+            hash_256(hash, document.getElementById('a-hash-256'))
+        };
+        context.startRendering()
+    }
+
+
+    async function gatherDevicesInfo() {
+        var devicesData = new Map();
+        var start = new Date().getTime();
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            console.log("Using new method to gather media devices.");
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            devices.forEach(device => {
+                if (device.deviceId && String(device.deviceId).length) {
+                    devicesData.set(device.deviceId, device.kind);
+                }
+            });
+        } else {
+            console.log("Using old method to gather media devices.");
+            gatherDevicesInfoOld(devicesData)
+        }
+
+        var end = new Date().getTime();
+        var timeTaken = end - start;
+        document.getElementById('t-media').innerHTML = timeTaken
+
+        var json = JSON.stringify(devicesData, (key, value) => (value instanceof Map ? [...value] : value));
+        document.getElementById("md-list").innerHTML = json
+        hash_256(Array.from(devicesData.keys()).join('##'), document.getElementById('md-hash'))
+    }
+
+    function gatherDevicesInfoOld(map) {
+        if (typeof MediaStreamTrack !== "undefined") {
+            MediaStreamTrack.getSources(devices => {
+                devices.forEach(device => {
+                    if (device.id && String(device.id).length) {
+                        map.set(device.id, device.kind);
+                    }
+                });
+            });
+        } else {
+            console.log("Sorry, your browser does not support accessing media devices.");
+        }
+    }
+
+    function gatherIpData() {
+        var start = new Date().getTime();
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "https://api.ipify.org?format=json", true);
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                console.log(JSON.parse(xhr.responseText).ip);
+                document.getElementById("ip-v4").innerHTML = JSON.parse(xhr.responseText).ip
+                var end = new Date().getTime();
+                var timeTaken = end - start;
+                document.getElementById('t-ip4').innerHTML = timeTaken
+            }
+        };
+        xhr.send();
+
+
+        var start2 = new Date().getTime();
+        fetch("https://ipapi.co/json/")
+            .then(response => response.json())
+            .then(data => {
+                var end2 = new Date().getTime();
+                var timeTaken2 = end2 - start2;
+                document.getElementById('t-ip').innerHTML = timeTaken2
+                console.log("IP address: " + data.ip);
+                console.log("ISP: " + data.org);
+                document.getElementById("ip-data").innerHTML = JSON.stringify(data)
+            });
+    }
+
+    function gatherFontsData() {
+        var canvas = document.getElementById("myCanvas");
+        var ctx = canvas.getContext("2d");
+        var found = [];
+
+        var start = new Date().getTime();
+        for (var i = 0; i < fontsList.length; i++) {
+            // set the font to the current font in the loop
+            ctx.font = "50px '" + fontsList[i] + "'";
+            // check if the font is available on the device
+            if (ctx.measureText("abc").width > 0) {
+                found.push(fontsList[i]);
+            }
+        }
+
+        var end = new Date().getTime();
+        var timeTaken = end - start;
+        document.getElementById('t-fonts').innerHTML = timeTaken
+
+        console.log(found)
+        document.getElementById("fonts").innerHTML = found
+        hash_256(found.join('##'), document.getElementById('fonts-hash'))
+    }
+
+    function gatherData() {
+        const data = new Map();
+
+        var start = new Date().getTime();
+        data.set("userAgent", navigator.userAgent)
+        data.set("language", navigator.language)
+        data.set("colorDepth", screen.colorDepth)
+        data.set("screenRes", this.getScreenResolution().join('x'))
+        data.set("timeZoneOffset", new Date().getTimezoneOffset())
+        data.set("hasSessionStorage", this.hasSessionStorage())
+        data.set("hasLocalStorage", this.hasLocalStorage())
+        data.set("hasIndexDB", this.hasIndexDb())
+        data.set("openDatabase", typeof (window.openDatabase))
+        data.set("cpuClass", navigator.cpuClass)
+        data.set("platform", navigator.platform)
+        data.set("doNotTrack", navigator.doNotTrack)
+        data.set("plugins", this.getPluginsString())
+
+        var end = new Date().getTime();
+        var timeTaken = end - start;
+        document.getElementById('t-data').innerHTML = timeTaken
+
+        console.log(navigator.userAgent)
+        var jsonData = JSON.stringify(data, (key, value) => (value instanceof Map ? [...value] : value));
+        console.log(jsonData)
+        document.getElementById("datatxt").innerHTML = jsonData
+        hash_256(Array.from(data.values()).join('##'), document.getElementById('datahash'))
+
+        return data
+    }
+
+    function getScreenResolution() {
+        return (screen.height > screen.width) ? [screen.height, screen.width] : [screen.width, screen.height];
+    }
+
+    function hasSessionStorage() {
+        try {
+            return !!window.sessionStorage;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function hasLocalStorage() {
+        try {
+            return !!window.localStorage;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function hasIndexDb() {
+        try {
+            return !!window.indexedDB;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function isIE() {
+        if (navigator.appName === 'Microsoft Internet Explorer') {
+            return true;
+        } else if (navigator.appName === 'Netscape' && /Trident/.test(navigator.userAgent)) {
+            return true;
+        }
+        return false;
+    }
+
+    function getPluginsString() {
+        if (this.isIE()) {
+            return this.getIEPluginsString();
+        } else {
+            return this.getRegularPluginsString();
+        }
+    }
+
+    function getRegularPluginsString() {
+        return this.mapper(navigator.plugins, function (p) {
+            var mimeTypes = this.mapper(p, function (mt) {
+                return [mt.type, mt.suffixes].join('~');
+            }).join(',');
+            return [p.name, p.description, mimeTypes].join('::');
+        }, this).join(';');
+    }
+
+
+    function getIEPluginsString() {
+        if (window.ActiveXObject) {
+            var names = ['ShockwaveFlash.ShockwaveFlash',
+                'AcroPDF.PDF',
+                'PDF.PdfCtrl',
+                'QuickTime.QuickTime',
+                'rmocx.RealPlayer G2 Control',
+                'rmocx.RealPlayer G2 Control.1',
+                'RealPlayer.RealPlayer(tm) ActiveX Control (32-bit)',
+                'RealVideo.RealVideo(tm) ActiveX Control (32-bit)',
+                'RealPlayer',
+                'SWCtl.SWCtl',
+                'WMPlayer.OCX',
+                'AgControl.AgControl', // Silverlight
+                'Skype.Detection'];
+
+            return this.mapper(names, function (name) {
+                try {
+                    new ActiveXObject(name);
+                    return name;
+                } catch (e) {
+                    return null;
+                }
+            }).join(';');
+        } else {
+            return "";
+        }
+    }
+
+    var canvas = document.getElementById("myCanvas");
+    var ctx = canvas.getContext("2d");
+
+    // Define the points for the polygon
+    var points = [
+        { x: 100, y: 100 },
+        { x: 200, y: 75 },
+        { x: 300, y: 125 },
+        { x: 225, y: 175 },
+        { x: 250, y: 50 },
+        { x: 150, y: 125 },
+        { x: 200, y: 200 },
+        { x: 100, y: 150 },
+        { x: 150, y: 50 },
+        { x: 200, y: 75 }
+    ];
+
+    // Start timer
+    var start = new Date().getTime();
+
+    // Draw the polygon with colors and gradient
+    var gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, "red");
+    gradient.addColorStop(0.5, "orange");
+    gradient.addColorStop(1, "yellow");
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (var i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Resize canvas after drawing
+    canvas.width *= 2;
+    canvas.height *= 2;
+
+    // Fill the polygon with fillStyle #069
+    ctx.fillStyle = "#069";
+    ctx.fill();
+
+    // End timer and calculate time taken
+    var end = new Date().getTime();
+    var timeTaken = end - start;
+
+    srcPolygon = canvas.toDataURL();
+    hashPolygon = 0;
+
+    for (i = 0; i < srcPolygon.length; i++) {
+        char = srcPolygon.charCodeAt(i);
+        hashPolygon = ((hashPolygon << 5) - hashPolygon) + char;
+        hashPolygon = hashPolygon & hashPolygon;
+    }
+
+
+
+    // Start timer
+    var startText = new Date().getTime();
+
+
+    ctx.fillStyle = "rgb(255,0,255)";
+    ctx.beginPath();
+    ctx.rect(20, 20, 150, 100);
+    ctx.fill();
+    ctx.stroke();
+    ctx.closePath();
+    ctx.beginPath();
+    ctx.fillStyle = "rgb(0,255,255)";
+    ctx.arc(50, 50, 50, 0, Math.PI * 2, true);
+    ctx.fill();
+    ctx.stroke();
+    ctx.closePath();
+    ctx.beginPath();
+    ctx.arc(75, 100, 50, 0, Math.PI * 2, true);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgb(255,0,255)";
+    ctx.arc(75, 75, 75, 0, Math.PI * 2, true);
+    ctx.arc(75, 75, 25, 0, Math.PI * 2, true);
+    ctx.fill("evenodd");
+
+
+    // Text with lowercase/uppercase/punctuation symbols
+    var txt = "Cwm fjordbank glyphs vext quiz";
+    ctx.textBaseline = "top";
+    // The most common type
+    ctx.font = "17px 'Arial'";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#f60";
+    ctx.fillRect(125, 1, 62, 20);
+    ctx.rotate(.03);
+    // Some tricks for color mixing to increase the difference in rendering
+    ctx.fillStyle = "#069";
+    ctx.fillText(txt, 2, 15);
+    ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+    ctx.fillText(txt, 4, 17);
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "blue";
+    ctx.fillRect(10, 20, 231, 4);
+
+    // End timer and calculate time taken
+    var endText = new Date().getTime();
+    var timeTakenText = endText - startText;
+
+    console.log("Time taken to draw polygon: " + timeTaken + "ms");
+    console.log("Time taken for text: " + timeTakenText + "ms");
+    document.getElementById('t-hash').innerHTML = timeTakenText
+    document.getElementById('t-hash-p').innerHTML = timeTaken
+
+
+    src = canvas.toDataURL();
+    hash = 0;
+
+    for (i = 0; i < src.length; i++) {
+        char = src.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+
+    console.log("HashCode: " + hash);
+    console.log("HashCodePolygon: " + hashPolygon);
+
+    //$('#hash-code').html(hash);
+    //$('#hash-code-polygon').html(hashPolygon);
+
+    document.getElementById('hash-code').innerHTML = hash
+
+    document.getElementById('hash-code-polygon').innerHTML = hashPolygon
+
+    hash_256(hash, document.getElementById('hash-code256'))
+    hash_256(hashPolygon, document.getElementById('hash-code-polygon256'))
+
+    gatherData()
+    gatherFontsData()
+    gatherIpData()
+    gatherDevicesInfo()
+    gatherAudio()
+
+</script>
+</head>
+
+
+
+</html>

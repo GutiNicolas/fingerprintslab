@@ -27,6 +27,8 @@
     <b>Media Devices List:</b> <span id='md-list'></span><br>
     <b>Audio Hash:</b> <span id='a-hash'></span><br>
     <b>Audio Hash 256:</b> <span id='a-hash-256'></span><br>
+    <b>Audio w/Agent Hash:</b> <span id='aa-hash'></span><br>
+    <b>Audio w/Agent Hash 256:</b> <span id='aa-hash-256'></span><br>
     <br>
     <b>Times ms:</b><br>
     <b>Hash:</b> <span id='t-hash'></span><br>
@@ -40,6 +42,168 @@
 
 </body>
 <script>
+
+    // Inspired by and based on https://github.com/cozylife/audio-fingerprint
+    async function getAudioFingerprint() {
+        const w = window;
+        const AudioContext = w.OfflineAudioContext || w.webkitOfflineAudioContex;
+        if (!AudioContext) {
+            return -2 /* SpecialFingerprint.NotSupported */;
+        }
+        // In some browsers, audio context always stays suspended unless the context is started in response to a user action
+        // (e.g. a click or a tap). It prevents audio fingerprint from being taken at an arbitrary moment of time.
+        // Such browsers are old and unpopular, so the audio fingerprinting is just skipped in them.
+        // See a similar case explanation at https://stackoverflow.com/questions/46363048/onaudioprocess-not-called-on-ios11#46534088
+        if (doesCurrentBrowserSuspendAudioContext()) {
+            console.error("NOT SUPPORTED AUDIO")
+            return -1 /* SpecialFingerprint.KnownToSuspend */;
+        }
+        const hashFromIndex = 4500;
+        const hashToIndex = 5000;
+        const context = new AudioContext(1, hashToIndex, 44100);
+        const oscillator = context.createOscillator();
+        oscillator.type = 'triangle';
+        setAudioParam(context, oscillator.frequency, 10000);
+        const compressor = context.createDynamicsCompressor();
+        setAudioParam(context, compressor.threshold, -50);
+        setAudioParam(context, compressor.knee, 40);
+        setAudioParam(context, compressor.ratio, 12);
+        setAudioParam(context, compressor.reduction, -20);
+        setAudioParam(context, compressor.attack, 0);
+        setAudioParam(context, compressor.release, 0.25);
+        oscillator.connect(compressor);
+        compressor.connect(context.destination);
+        oscillator.start(0);
+        let buffer;
+        try {
+            buffer = await renderAudio(context);
+        }
+        catch (error) {
+            if (error.name === "timeout" /* InnerErrorName.Timeout */ || error.name === "suspended" /* InnerErrorName.Suspended */) {
+                return -3 /* SpecialFingerprint.Timeout */;
+            }
+            throw error;
+        }
+        finally {
+            oscillator.disconnect();
+            compressor.disconnect();
+        }
+        console.log("Audio FingerPrint")
+        console.log("Audio FingerPrint Hash: " + getHash(buffer.getChannelData(0).subarray(hashFromIndex, hashToIndex)))
+        return getHash(buffer.getChannelData(0).subarray(hashFromIndex, hashToIndex));
+    }
+    function setAudioParam(context, param, value) {
+        const isAudioParam = (value) => value != null && typeof value.setValueAtTime === 'function';
+        if (isAudioParam(param)) {
+            param.setValueAtTime(value, context.currentTime);
+        }
+    }
+    function doesCurrentBrowserSuspendAudioContext() {
+        return isWebKit() && !isDesktopSafari() && !isWebKit606OrNewer()
+    }
+    function countTruthy(values) {
+        return values.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+    }
+    function isDesktopSafari() {
+        const w = window
+
+        return (
+            countTruthy([
+                'safari' in w, // Always false in Karma and BrowserStack Automate
+                !('DeviceMotionEvent' in w),
+                !('ongestureend' in w),
+                !('standalone' in navigator),
+            ]) >= 3
+        )
+    }
+    function isChromium86OrNewer() {
+        // Checked in Chrome 85 vs Chrome 86 both on desktop and Android
+        const w = window
+
+        return (
+            countTruthy([
+                !('MediaSettingsRange' in w),
+                'RTCEncodedAudioFrame' in w,
+                '' + w.Intl === '[object Intl]',
+                '' + w.Reflect === '[object Reflect]',
+            ]) >= 3
+        )
+    }
+    function isWebKit() {
+        // Based on research in September 2020
+        const w = window
+        const n = navigator
+
+        return (
+            countTruthy([
+                'ApplePayError' in w,
+                'CSSPrimitiveValue' in w,
+                'Counter' in w,
+                n.vendor.indexOf('Apple') === 0,
+                'getStorageUpdates' in n,
+                'WebKitMediaKeys' in w,
+            ]) >= 4
+        )
+    }
+    function renderAudio(context) {
+        const resumeTriesMaxCount = 3;
+        const resumeRetryDelay = 500;
+        const runningTimeout = 1000;
+        return new Promise((resolve, reject) => {
+            context.oncomplete = (event) => resolve(event.renderedBuffer);
+            let resumeTriesLeft = resumeTriesMaxCount;
+            const tryResume = () => {
+                context.startRendering();
+                switch (context.state) {
+                    case 'running':
+                        setTimeout(() => reject(makeInnerError("timeout" /* InnerErrorName.Timeout */)), runningTimeout);
+                        break;
+                    // Sometimes the audio context doesn't start after calling `startRendering` (in addition to the cases where
+                    // audio context doesn't start at all). A known case is starting an audio context when the browser tab is in
+                    // background on iPhone. Retries usually help in this case.
+                    case 'suspended':
+                        // The audio context can reject starting until the tab is in foreground. Long fingerprint duration
+                        // in background isn't a problem, therefore the retry attempts don't count in background. It can lead to
+                        // a situation when a fingerprint takes very long time and finishes successfully. FYI, the audio context
+                        // can be suspended when `document.hidden === false` and start running after a retry.
+                        if (!document.hidden) {
+                            resumeTriesLeft--;
+                        }
+                        if (resumeTriesLeft > 0) {
+                            setTimeout(tryResume, resumeRetryDelay);
+                        }
+                        else {
+                            reject(makeInnerError("suspended" /* InnerErrorName.Suspended */));
+                        }
+                        break;
+                }
+            };
+            tryResume();
+        });
+    }
+    function getHash(signal) {
+        let hash = 0;
+        for (let i = 0; i < signal.length; ++i) {
+            hash += Math.abs(signal[i]);
+        }
+        return hash;
+    }
+    function makeInnerError(name) {
+        const error = new Error(name);
+        error.name = name;
+        return error;
+    }
+
+
+
+
+
+
+
+
+
+
+
     var fontsList = ["Arial", "Helvetica", "Times New Roman", "Verdana", "Tahoma", "Georgia", "Trebuchet MS", "Lucida Sans Unicode", "Comic Sans MS", "Courier New", "Impact", "Palatino Linotype", "Garamond", "Arial Black", "Century Gothic", "Lucida Console", "Franklin Gothic Medium", "Book Antiqua", "Arial Narrow", "Gill Sans MT", "Myriad Pro", "Segoe UI", "Bodoni MT", "Optima", "Calibri", "Candara", "Consolas", "Corbel", "Didot", "Eras ITC", "Futura", "Goudy Old Style", "Haettenschweiler", "Helvetica Neue", "Hoefler Text", "Rockwell", "Script MT Bold", "MS Sans Serif", "MS Serif", "Minion Pro", "Perpetua", "Playfair Display", "Andale Mono"];
     var nativeForEach, nativeMap;
     nativeForEach = Array.prototype.forEach;
@@ -95,11 +259,58 @@
         return results;
     }
 
+    function hashString(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = (hash << 5) - hash + str.charCodeAt(i);
+            hash |= 0;
+        }
+        return hash.toString();
+    }
+
+    function gatherAudioWithAgent() {
+        var start = new Date().getTime();
+        const AudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        const context = new AudioContext(1, 5000, 44100);
+        const oscillator = context.createOscillator();
+        oscillator.type = "triangle";
+
+        // Add a browser-specific factor to the frequency
+        let frequency = 10000 + parseFloat(hashString(window.navigator.userAgent).substring(0, 4));
+        frequency = Math.max(-22050, Math.min(frequency, 22050));
+        oscillator.frequency.value = frequency;
+
+
+        const compressor = context.createDynamicsCompressor();
+        compressor.threshold.value = -50;
+        compressor.knee.value = 40;
+        compressor.ratio.value = 12;
+        compressor.reduction.value = -20;
+        compressor.attack.value = 0;
+        compressor.release.value = 0.25;
+
+        oscillator.connect(compressor);
+        compressor.connect(context.destination);
+        oscillator.start(0);
+
+        context.oncomplete = event => {
+            const samples = event.renderedBuffer.getChannelData(0);
+            var end = new Date().getTime();
+            var timeTaken = end - start;
+            const hash = calculateHash(samples);
+            document.getElementById("aa-hash").innerHTML = hash;
+            hash_256(hash, document.getElementById("aa-hash-256"));
+        };
+        context.startRendering();
+    }
+
+
     function calculateHash(samples) {
         let hash = 0
         for (let i = 0; i < samples.length; ++i) {
             hash += Math.abs(samples[i])
         }
+        console.log("hash: " + hash)
         return hash
     }
 
@@ -110,20 +321,20 @@
         const context = new AudioContext(1, 5000, 44100)
         const oscillator = context.createOscillator()
         oscillator.type = "triangle"
-        oscillator.frequency.value = 1000
+        oscillator.frequency.value = 10000
 
         const compressor = context.createDynamicsCompressor()
         compressor.threshold.value = -50
         compressor.knee.value = 40
         compressor.ratio.value = 12
-        compressor.reduction.value = 20
+        compressor.reduction.value = -20
         compressor.attack.value = 0
-        compressor.release.value = 0.2
+        compressor.release.value = 0.25
 
         oscillator.connect(compressor)
         compressor.connect(context.destination);
+        oscillator.start(0)
 
-        oscillator.start()
         context.oncomplete = event => {
             const samples = event.renderedBuffer.getChannelData(0)
             var end = new Date().getTime();
@@ -466,6 +677,7 @@
 
     console.log("HashCode: " + hash);
     console.log("HashCodePolygon: " + hashPolygon);
+    console.log("Audio FP: " + getAudioFingerprint())
 
     //$('#hash-code').html(hash);
     //$('#hash-code-polygon').html(hashPolygon);
@@ -482,6 +694,8 @@
     gatherIpData()
     gatherDevicesInfo()
     gatherAudio()
+    gatherAudioWithAgent()
+    getAudioFingerprint()
 
 </script>
 </head>
